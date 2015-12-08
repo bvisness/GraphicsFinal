@@ -33,6 +33,9 @@
     <ClCompile Include="InitShader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="VisnessInitShader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="VisnessGL.h">
@@ -56,12 +59,24 @@
     <ClInclude Include="Camera.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="VisnessInitShader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="vshader-phongshading.glsl">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="fshader-phongshading.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="cshader-circlevertices.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="vshader-simple.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="fshader-simple.glsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

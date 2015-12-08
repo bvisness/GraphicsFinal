@@ -1,7 +1,7 @@
 #include "VisnessGL.h"
 
 struct Camera {
-	GLfloat fov;
-	GLfloat nearClip;
-	GLfloat farClip;
+	GLfloat fov = 45;
+	GLfloat nearClip = 0.01;
+	GLfloat farClip = 500;
 };

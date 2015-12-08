@@ -8,8 +8,9 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 #include <GL/Angel.h>
-#include "GLMiddleman.h"
 #include "Camera.h"
+#include "VisnessInitShader.h"
+#include "VisnessUtil.h"
 #include <math.h>
 #pragma comment(lib, "glew32.lib")
 #pragma comment(lib, "ILUT.lib")
@@ -28,8 +29,30 @@ int mouseYDelta = 0;
 bool mouseLeftPressed = false;
 bool mouseRightPressed = false;
 
-GLMiddleman* middleman;
 Camera mainCam;
+
+#define NUM_VERTICES 1000
+#define WORK_GROUP_SIZE 6
+
+// References to shader programs
+GLuint progRender;
+GLuint progCompute;
+
+// References to buffers and objects
+GLuint vao;
+GLuint vboPosition;
+GLuint vboColor;
+GLuint vPositionBuffer;
+
+// References to shader attributes
+GLuint vPosition;
+GLuint vAmbientDiffuseColor;
+GLuint uModelView;
+GLuint uProjection;
+
+// Arrays of vertex data
+Vector4 vertexPositions[NUM_VERTICES];
+Vector4 vertexColors[NUM_VERTICES];
 
 void display(void)
 {
@@ -38,14 +61,21 @@ void display(void)
 
 	GLenum error = glGetError();
 	if (error != GL_NO_ERROR) {
-#ifdef __APPLE__
-		printf("%s\n", gluErrorString(error));
-#else
-		//        printf("%s\n", glewErrorString(error));
-#endif
+        printf("%s\n", gluErrorString(error));
 	}
 
 	// Draw the scene
+	/*glBindBuffer(GL_ARRAY_BUFFER, vPositionBuffer);
+	printf("Here's the error before: %s\n", gluErrorString(glGetError()));
+	glVertexPointer(4, GL_FLOAT, 0, points);
+	printf("Here's the error after: %s\n", gluErrorString(glGetError()));
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
+	glDisableClientState(GL_VERTEX_ARRAY);*/
+
+	glUseProgram(progRender);
+	glBindVertexArray(vao);
+	glDrawArrays(GL_LINES, 0, NUM_VERTICES);
 
 	glutSwapBuffers();
 }
@@ -89,8 +119,66 @@ void specialUp(int key, int x, int y) {
 
 }
 
+void initObjects() {
+	mainCam = Camera();
+	for (int i = 0; i < NUM_VERTICES; i++)
+	{
+		vertexPositions[i] = Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
+		vertexColors[i] = Vector4(1, 1, 1, 1);
+	}
+}
+
+void initShaders() {
+	progRender = InitShader("vshader-simple.glsl", "fshader-simple.glsl");
+	progCompute = InitComputeShader("cshader-circlevertices.glsl");
+}
+
+void initBuffers() {
+	// Create vao
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+
+	// Create standard vbo and buffer data
+	glGenBuffers(1, &vboPosition);
+	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)* NUM_VERTICES, vertexPositions, GL_STATIC_DRAW);
+	vPosition = glGetAttribLocation(progRender, "vPosition");
+	glEnableVertexAttribArray(vPosition);
+	glVertexAttribPointer(vPosition, 4, GL_FLOAT, GL_FALSE, 0, 0);
+
+	glGenBuffers(1, &vboColor);
+	glBindBuffer(GL_ARRAY_BUFFER, vboColor);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)* NUM_VERTICES, vertexColors, GL_STATIC_DRAW);
+	vAmbientDiffuseColor = glGetAttribLocation(progRender, "vAmbientDiffuseColor");
+	glEnableVertexAttribArray(vAmbientDiffuseColor);
+	glVertexAttribPointer(vAmbientDiffuseColor, 4, GL_FLOAT, GL_FALSE, 0, 0);
+
+	// Get uniform references
+	uModelView = glGetUniformLocation(progRender, "uModelView");
+	uProjection = glGetUniformLocation(progRender, "uProjection");
+
+	/*GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
+
+	glGenBuffers(1, &vPositionBuffer);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, vPositionBuffer);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_VERTICES * sizeof(Vector4), NULL, GL_STATIC_DRAW); */
+
+	/*vertexPositions = (Vector4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_VERTICES * sizeof(Vector4), bufMask);
+	for (int i = 0; i < NUM_VERTICES; i++)
+	{
+		points[i] = Vector4(0, 0, 0, 1);
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, vPositionBuffer);
+	glUseProgram(progCompute);
+	glDispatchCompute(NUM_VERTICES / WORK_GROUP_SIZE, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	*/
+}
+
 void init() {
-	glClearColor(0.0, 0.0, 0.0, 0.0);
+	glClearColor(0, 0, 0, 0);
 
 	glEnable(GL_DEPTH_TEST);
 	
@@ -102,7 +190,13 @@ void init() {
 	glCullFace(GL_BACK);
 	glEnable(GL_CULL_FACE);
 
-	middleman = new GLMiddleman();
+	initObjects();
+	initShaders();
+	glUseProgram(progRender);
+	initBuffers();
+
+	mat4 newModelView = LookAt(Vector4(0, 0, 3, 0), Vector4(0, 0, 0, 0), Vector4(0, 1, 0, 0));
+	glUniformMatrix4fv(uModelView, 1, GL_TRUE, newModelView);
 }
 
 void reshape(int width, int height){
@@ -110,7 +204,7 @@ void reshape(int width, int height){
 	wh = height;
 
 	mat4 newProjectionMatrix = Perspective(mainCam.fov, (float)ww / wh, mainCam.nearClip, mainCam.farClip);
-	middleman->updateProjectionMatrix(newProjectionMatrix);
+	glUniformMatrix4fv(uProjection, 1, GL_TRUE, newProjectionMatrix);
 
 	glViewport(0, 0, width, height);
 }
@@ -125,6 +219,8 @@ void timer(GLint v) {
 int main(int argc, char **argv)
 {
 	glutInit(&argc, argv);
+	glutInitContextVersion(4, 3);
+	glutInitContextProfile(GLUT_CORE_PROFILE);
 	glutInitWindowPosition(0, 0);
 	glutInitWindowSize(ww, wh);
 #ifdef __APPLE__
@@ -132,7 +228,7 @@ int main(int argc, char **argv)
 #else
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH | GLUT_MULTISAMPLE);
 #endif
-	glutCreateWindow("OpenGL 3.2");
+	glutCreateWindow("Ben Visness Graphics Final");
 
 #ifndef __APPLE__
 	glewExperimental = GL_TRUE;

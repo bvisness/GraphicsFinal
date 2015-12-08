@@ -71,6 +71,7 @@
     <ClCompile Include="InitShader.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Texture2D.cpp" />
+    <ClCompile Include="VisnessInitShader.cpp" />
     <ClCompile Include="VisnessUtil.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -80,11 +81,15 @@
     <ClInclude Include="Material.h" />
     <ClInclude Include="Texture2D.h" />
     <ClInclude Include="VisnessGL.h" />
+    <ClInclude Include="VisnessInitShader.h" />
     <ClInclude Include="VisnessUtil.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="cshader-circlevertices.glsl" />
     <None Include="fshader-phongshading.glsl" />
+    <None Include="fshader-simple.glsl" />
     <None Include="vshader-phongshading.glsl" />
+    <None Include="vshader-simple.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

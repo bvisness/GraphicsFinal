@@ -5,6 +5,12 @@
 
 namespace Angel {
 
+struct Shader {
+	const char*  filename;
+	GLenum       type;
+	GLchar*      source;
+};
+
 // Create a NULL-terminated string by reading the provided file
 static char*
 readShaderSource(const char* shaderFile)
@@ -32,17 +38,11 @@ readShaderSource(const char* shaderFile)
     return buf;
 }
 
-
 // Create a GLSL program object from vertex and fragment shader files
 GLuint
 InitShader(const char* vShaderFile, const char* fShaderFile)
 {
-    struct Shader {
-        const char*  filename;
-        GLenum       type;
-        GLchar*      source;
-    }
-    shaders[2] = {
+    Shader shaders[2] = {
         { vShaderFile, GL_VERTEX_SHADER, NULL },
         { fShaderFile, GL_FRAGMENT_SHADER, NULL }
     };
