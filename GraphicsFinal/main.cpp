@@ -31,7 +31,7 @@ bool mouseRightPressed = false;
 
 Camera mainCam;
 
-#define NUM_VERTICES 1000
+#define NUM_VERTICES 360
 #define WORK_GROUP_SIZE 6
 
 // References to shader programs
@@ -42,7 +42,8 @@ GLuint progCompute;
 GLuint vao;
 GLuint vboPosition;
 GLuint vboColor;
-GLuint vPositionBuffer;
+GLuint ssboPosition;
+const GLuint ssboBindingIndex = 42;
 
 // References to shader attributes
 GLuint vPosition;
@@ -75,7 +76,7 @@ void display(void)
 
 	glUseProgram(progRender);
 	glBindVertexArray(vao);
-	glDrawArrays(GL_LINES, 0, NUM_VERTICES);
+	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
 
 	glutSwapBuffers();
 }
@@ -105,6 +106,13 @@ void keyboard(unsigned char key, int x, int y) {
 	}
 	
 	// Custom keyboard code
+	if (key == 'c') {
+		printf("Trying to compute...\n");
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssboBindingIndex, vboPosition);
+		glUseProgram(progCompute);
+		glDispatchCompute(NUM_VERTICES / WORK_GROUP_SIZE, 1, 1);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	}
 }
 
 void keyboardUp(unsigned char key, int x, int y) {
@@ -141,14 +149,14 @@ void initBuffers() {
 	// Create standard vbo and buffer data
 	glGenBuffers(1, &vboPosition);
 	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)* NUM_VERTICES, vertexPositions, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* NUM_VERTICES, vertexPositions, GL_STATIC_DRAW);
 	vPosition = glGetAttribLocation(progRender, "vPosition");
 	glEnableVertexAttribArray(vPosition);
 	glVertexAttribPointer(vPosition, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
 	glGenBuffers(1, &vboColor);
 	glBindBuffer(GL_ARRAY_BUFFER, vboColor);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)* NUM_VERTICES, vertexColors, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* NUM_VERTICES, vertexColors, GL_STATIC_DRAW);
 	vAmbientDiffuseColor = glGetAttribLocation(progRender, "vAmbientDiffuseColor");
 	glEnableVertexAttribArray(vAmbientDiffuseColor);
 	glVertexAttribPointer(vAmbientDiffuseColor, 4, GL_FLOAT, GL_FALSE, 0, 0);
@@ -157,11 +165,21 @@ void initBuffers() {
 	uModelView = glGetUniformLocation(progRender, "uModelView");
 	uProjection = glGetUniformLocation(progRender, "uProjection");
 
-	/*GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
+	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 
-	glGenBuffers(1, &vPositionBuffer);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, vPositionBuffer);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_VERTICES * sizeof(Vector4), NULL, GL_STATIC_DRAW); */
+	// Bind our SSBO to the same place in memory
+	GLuint ssboBlockIndex = glGetProgramResourceIndex(progCompute, GL_SHADER_STORAGE_BLOCK, "SSBO");
+	glShaderStorageBlockBinding(progCompute, ssboBlockIndex, ssboBindingIndex);
+	
+	
+	glGenBuffers(1, &ssboPosition);
+	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboPosition);
+	//glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_VERTICES * sizeof(Vector4), NULL, GL_STATIC_DRAW);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, vboPosition, ssboPosition);
+
+
+
+
 
 	/*vertexPositions = (Vector4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_VERTICES * sizeof(Vector4), bufMask);
 	for (int i = 0; i < NUM_VERTICES; i++)
