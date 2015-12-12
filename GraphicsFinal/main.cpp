@@ -11,6 +11,7 @@
 #include "Camera.h"
 #include "VisnessInitShader.h"
 #include "VisnessUtil.h"
+#include "Grammar.h"
 #include <math.h>
 #pragma comment(lib, "glew32.lib")
 #pragma comment(lib, "ILUT.lib")
@@ -54,6 +55,8 @@ GLuint uProjection;
 // Arrays of vertex data
 Vector4 vertexPositions[NUM_VERTICES];
 Vector4 vertexColors[NUM_VERTICES];
+
+Grammar* grammar;
 
 void display(void)
 {
@@ -113,6 +116,10 @@ void keyboard(unsigned char key, int x, int y) {
 		glDispatchCompute(NUM_VERTICES / WORK_GROUP_SIZE, 1, 1);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 	}
+	else if (key == 'd') {
+		std::string derivation = grammar->runDerivation();
+		printf("%s\n", derivation.c_str());
+	}
 }
 
 void keyboardUp(unsigned char key, int x, int y) {
@@ -134,6 +141,11 @@ void initObjects() {
 		vertexPositions[i] = Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
 		vertexColors[i] = Vector4(1, 1, 1, 1);
 	}
+
+	std::vector<Production> productions = {
+		{ 'A', "ABA" },
+	};
+	grammar = new Grammar("BAB", productions);
 }
 
 void initShaders() {
