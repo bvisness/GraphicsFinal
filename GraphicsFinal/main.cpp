@@ -32,19 +32,27 @@ bool mouseRightPressed = false;
 
 Camera mainCam;
 
-#define NUM_VERTICES 360
-#define WORK_GROUP_SIZE 6
+#define NUM_VERTICES 36
+#define NUM_WORK_GROUPS 1
+
+#define NUM_CHUNKS 4
 
 // References to shader programs
 GLuint progRender;
 GLuint progCompute;
+GLuint progCStep1;
 
 // References to buffers and objects
 GLuint vao;
 GLuint vboPosition;
 GLuint vboColor;
+GLuint ssboInputString;
+GLuint ssboInputStringStartsEnds;
+GLuint ssboChunkDepths;
+GLuint ssboACEveryOther;
 GLuint ssboPosition;
 const GLuint ssboBindingIndex = 42;
+const GLuint cStep1BindingIndex = 43;
 
 // References to shader attributes
 GLuint vPosition;
@@ -77,9 +85,18 @@ void display(void)
 	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
 	glDisableClientState(GL_VERTEX_ARRAY);*/
 
+	mat4 newModelView = LookAt(Vector4(0, 0, 3, 0), Vector4(0, 0, 0, 0), Vector4(0, 1, 0, 0));
+	newModelView = newModelView * RotateY(mouseX);
+	glUniformMatrix4fv(uModelView, 1, GL_TRUE, newModelView);
+
 	glUseProgram(progRender);
 	glBindVertexArray(vao);
-	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
+	glDrawArrays(GL_LINES, 0, NUM_VERTICES);
+
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, ssboACEveryOther);
+	GLuint counterVal = *(GLuint *)glMapBuffer(GL_ATOMIC_COUNTER_BUFFER, GL_READ_ONLY);
+	glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+	//printf("uEveryOther value: %d\n", counterVal);
 
 	glutSwapBuffers();
 }
@@ -113,12 +130,50 @@ void keyboard(unsigned char key, int x, int y) {
 		printf("Trying to compute...\n");
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssboBindingIndex, vboPosition);
 		glUseProgram(progCompute);
-		glDispatchCompute(NUM_VERTICES / WORK_GROUP_SIZE, 1, 1);
-		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+		glDispatchCompute(NUM_WORK_GROUPS, 1, 1);
+		glMemoryBarrier(GL_ATOMIC_COUNTER_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 	}
 	else if (key == 'd') {
 		std::string derivation = grammar->runDerivation();
 		printf("%s\n", derivation.c_str());
+
+		GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
+
+		// Buffer over the new string
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* derivation.length(), NULL, GL_STATIC_DRAW);
+		GLint* chars = (GLint*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLint)* derivation.length(), bufMask);
+		for (int i = 0; i < derivation.length(); i++) {
+			chars[i] = (GLint)derivation[i];
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+		// Buffer the string start/end indices for each chunk
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* NUM_CHUNKS, NULL, GL_STATIC_DRAW);
+		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2) * NUM_CHUNKS, bufMask);
+		int stringChunkSize = derivation.length() / NUM_CHUNKS;
+		for (int i = 0; i < NUM_CHUNKS; i++)
+		{
+			indices[i].x = stringChunkSize * i;
+			indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
+			if (i == NUM_CHUNKS - 1) {
+				indices[i].y = derivation.length() - 1;
+			}
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+		// Run step 1
+		glUseProgram(progCStep1);
+		glDispatchCompute(NUM_CHUNKS, 1, 1);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		for (int i = 0; i < NUM_CHUNKS; i++) {
+			printf("Chunk depth %d: %d\n", i, chunkDepths[i]);
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
 }
 
@@ -143,14 +198,15 @@ void initObjects() {
 	}
 
 	std::vector<Production> productions = {
-		{ 'A', "ABA" },
+		{ 'F', "F[+F]F[-F]F" }
 	};
-	grammar = new Grammar("BAB", productions);
+	grammar = new Grammar("F", productions);
 }
 
 void initShaders() {
 	progRender = InitShader("vshader-simple.glsl", "fshader-simple.glsl");
 	progCompute = InitComputeShader("cshader-circlevertices.glsl");
+	progCStep1 = InitComputeShader("cshader-step1.glsl");
 }
 
 void initBuffers() {
@@ -177,34 +233,28 @@ void initBuffers() {
 	uModelView = glGetUniformLocation(progRender, "uModelView");
 	uProjection = glGetUniformLocation(progRender, "uProjection");
 
-	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
-
-	// Bind our SSBO to the same place in memory
+	// Get our SSBO block index
 	GLuint ssboBlockIndex = glGetProgramResourceIndex(progCompute, GL_SHADER_STORAGE_BLOCK, "SSBO");
 	glShaderStorageBlockBinding(progCompute, ssboBlockIndex, ssboBindingIndex);
-	
-	
-	glGenBuffers(1, &ssboPosition);
-	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboPosition);
-	//glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_VERTICES * sizeof(Vector4), NULL, GL_STATIC_DRAW);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, vboPosition, ssboPosition);
 
+	glGenBuffers(1, &ssboInputString);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 30, ssboInputString);
 
+	glGenBuffers(1, &ssboInputStringStartsEnds);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 31, ssboInputStringStartsEnds);
 
+	glGenBuffers(1, &ssboChunkDepths);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint) * NUM_CHUNKS, NULL, GL_STATIC_DRAW);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 32, ssboChunkDepths);
 
-
-	/*vertexPositions = (Vector4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_VERTICES * sizeof(Vector4), bufMask);
-	for (int i = 0; i < NUM_VERTICES; i++)
-	{
-		points[i] = Vector4(0, 0, 0, 1);
-	}
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, vPositionBuffer);
-	glUseProgram(progCompute);
-	glDispatchCompute(NUM_VERTICES / WORK_GROUP_SIZE, 1, 1);
-	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-	*/
+	// Configure atomic counters
+	glGenBuffers(1, &ssboACEveryOther);
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, ssboACEveryOther);
+	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
+	glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, ssboACEveryOther);
 }
 
 void init() {
