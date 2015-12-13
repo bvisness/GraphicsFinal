@@ -13,6 +13,7 @@
 #include "VisnessUtil.h"
 #include "Grammar.h"
 #include <math.h>
+#include <algorithm>
 #pragma comment(lib, "glew32.lib")
 #pragma comment(lib, "ILUT.lib")
 #pragma comment(lib, "DevIL.lib")
@@ -35,7 +36,7 @@ Camera mainCam;
 #define NUM_VERTICES 36
 #define NUM_WORK_GROUPS 1
 
-#define NUM_CHUNKS 4
+#define CHUNK_SIZE 64
 
 // References to shader programs
 GLuint progRender;
@@ -137,6 +138,8 @@ void keyboard(unsigned char key, int x, int y) {
 		std::string derivation = grammar->runDerivation();
 		printf("%s\n", derivation.c_str());
 
+		int numChunks = ceil(derivation.length() / (double)CHUNK_SIZE);
+
 		GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 
 		// Buffer over the new string
@@ -150,27 +153,31 @@ void keyboard(unsigned char key, int x, int y) {
 
 		// Buffer the string start/end indices for each chunk
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* NUM_CHUNKS, NULL, GL_STATIC_DRAW);
-		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2) * NUM_CHUNKS, bufMask);
-		int stringChunkSize = derivation.length() / NUM_CHUNKS;
-		for (int i = 0; i < NUM_CHUNKS; i++)
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numChunks, NULL, GL_STATIC_DRAW);
+		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2) * numChunks, bufMask);
+		int stringChunkSize = std::min((int)derivation.length(), CHUNK_SIZE);
+		for (int i = 0; i < numChunks; i++)
 		{
 			indices[i].x = stringChunkSize * i;
 			indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
-			if (i == NUM_CHUNKS - 1) {
+			if (i == numChunks - 1) {
 				indices[i].y = derivation.length() - 1;
 			}
 		}
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
+		// Prepare the chunk depths buffer
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks, NULL, GL_STATIC_DRAW);
+
 		// Run step 1
 		glUseProgram(progCStep1);
-		glDispatchCompute(NUM_CHUNKS, 1, 1);
+		glDispatchCompute(numChunks, 1, 1);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
 		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		for (int i = 0; i < NUM_CHUNKS; i++) {
+		for (int i = 0; i < numChunks; i++) {
 			printf("Chunk depth %d: %d\n", i, chunkDepths[i]);
 		}
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
@@ -247,7 +254,6 @@ void initBuffers() {
 
 	glGenBuffers(1, &ssboChunkDepths);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint) * NUM_CHUNKS, NULL, GL_STATIC_DRAW);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 32, ssboChunkDepths);
 
 	// Configure atomic counters
