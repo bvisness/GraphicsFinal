@@ -198,12 +198,14 @@ void keyboard(unsigned char key, int x, int y) {
 		// We are still bound to ssboChunkDepths
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
 		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		int oldValueAtIMinus1 = chunkDepths[0];
-		chunkDepths[0] = 0;
-		for (int i = 1; i < numChunks; i++) {
-			int oldValueAtI = chunkDepths[i];
-			chunkDepths[i] = chunkDepths[i - 1] + oldValueAtIMinus1;
-			oldValueAtIMinus1 = oldValueAtI;
+		{
+			int oldValueAtIMinus1 = chunkDepths[0];
+			chunkDepths[0] = 0;
+			for (int i = 1; i < numChunks; i++) {
+				int oldValueAtI = chunkDepths[i];
+				chunkDepths[i] = chunkDepths[i - 1] + oldValueAtIMinus1;
+				oldValueAtIMinus1 = oldValueAtI;
+			}
 		}
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
@@ -226,9 +228,16 @@ void keyboard(unsigned char key, int x, int y) {
 
 		// We are still bound to ssboDepthCounts
 		GLint* depthCounts = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		for (int i = 0; i < numChunks; i++) {
-			for (int j = 0; j < maxDepth; j++) {
-				printf("Pushes and pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
+		for (int j = 0; j <= maxDepth; j++) {
+			int oldValueAtIMinus1 = depthCounts[(j * numChunks) + 0];
+			depthCounts[(j * numChunks) + 0] = 0;
+			for (int i = 1; i < numChunks; i++) {
+				int oldValueAtI = depthCounts[(j * numChunks) + i];
+				depthCounts[(j * numChunks) + i] = depthCounts[(j * numChunks) + (i - 1)] + oldValueAtIMinus1;
+				oldValueAtIMinus1 = oldValueAtI;
+			}
+			for (int i = 0; i < numChunks; i++) {
+				printf("Scanned pushes & pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
 			}
 		}
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
