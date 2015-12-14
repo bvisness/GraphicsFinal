@@ -42,6 +42,7 @@ Camera mainCam;
 GLuint progRender;
 GLuint progCompute;
 GLuint progCStep1;
+GLuint progCStep3;
 
 // References to buffers and objects
 GLuint vao;
@@ -50,6 +51,7 @@ GLuint vboColor;
 GLuint ssboInputString;
 GLuint ssboInputStringStartsEnds;
 GLuint ssboChunkDepths;
+GLuint ssboDepthCounts;
 GLuint ssboACEveryOther;
 GLuint ssboPosition;
 const GLuint ssboBindingIndex = 42;
@@ -138,6 +140,23 @@ void keyboard(unsigned char key, int x, int y) {
 		std::string derivation = grammar->runDerivation();
 		printf("%s\n", derivation.c_str());
 
+		// Find the max depth of the string
+		int maxDepth = 0;
+		int depth = 0;
+		for (int i = 0; i < derivation.length(); i++) {
+			if (derivation[i] == '[') {
+				depth++;
+			}
+			else if (derivation[i] == ']') {
+				depth--;
+			}
+
+			if (depth > maxDepth) {
+				maxDepth = depth;
+			}
+		}
+
+		// Calculate the number of chunks necessary to process this string
 		int numChunks = ceil(derivation.length() / (double)CHUNK_SIZE);
 
 		GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
@@ -175,10 +194,42 @@ void keyboard(unsigned char key, int x, int y) {
 		glDispatchCompute(numChunks, 1, 1);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+		// Run step 2 (parallel scan of chunk depths)
+		// We are still bound to ssboChunkDepths
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
 		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		int oldValueAtIMinus1 = chunkDepths[0];
+		chunkDepths[0] = 0;
+		for (int i = 1; i < numChunks; i++) {
+			int oldValueAtI = chunkDepths[i];
+			chunkDepths[i] = chunkDepths[i - 1] + oldValueAtIMinus1;
+			oldValueAtIMinus1 = oldValueAtI;
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+		GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
 		for (int i = 0; i < numChunks; i++) {
-			printf("Chunk depth %d: %d\n", i, chunkDepths[i]);
+			printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+		// Allocate the depth count array
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks * (maxDepth + 1), NULL, GL_STATIC_DRAW);
+		glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32I, GL_RED_INTEGER, GL_INT, NULL);
+
+		// Run step 3
+		glUseProgram(progCStep3);
+		glDispatchCompute(numChunks, 1, 1);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+		// We are still bound to ssboDepthCounts
+		GLint* depthCounts = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		for (int i = 0; i < numChunks; i++) {
+			for (int j = 0; j < maxDepth; j++) {
+				printf("Pushes and pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
+			}
 		}
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
@@ -214,6 +265,7 @@ void initShaders() {
 	progRender = InitShader("vshader-simple.glsl", "fshader-simple.glsl");
 	progCompute = InitComputeShader("cshader-circlevertices.glsl");
 	progCStep1 = InitComputeShader("cshader-step1.glsl");
+	progCStep3 = InitComputeShader("cshader-step3.glsl");
 }
 
 void initBuffers() {
@@ -255,6 +307,10 @@ void initBuffers() {
 	glGenBuffers(1, &ssboChunkDepths);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 32, ssboChunkDepths);
+
+	glGenBuffers(1, &ssboDepthCounts);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 33, ssboDepthCounts);
 
 	// Configure atomic counters
 	glGenBuffers(1, &ssboACEveryOther);
