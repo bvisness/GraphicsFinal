@@ -127,6 +127,158 @@ void mouseMove(int x, int y) {
 	// Custom code here
 }
 
+void prepareString(std::string derivation) {
+	// Find the max depth of the string
+	int maxDepth = 0;
+	int depth = 0;
+	for (int i = 0; i < derivation.length(); i++) {
+		if (derivation[i] == '[') {
+			depth++;
+		}
+		else if (derivation[i] == ']') {
+			depth--;
+		}
+
+		if (depth > maxDepth) {
+			maxDepth = depth;
+		}
+	}
+
+	// Calculate the number of chunks necessary to process this string
+	int numChunks = ceil(derivation.length() / (double)CHUNK_SIZE);
+
+	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
+
+	// Buffer over the new string
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* derivation.length(), NULL, GL_STATIC_DRAW);
+	GLint* chars = (GLint*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLint)* derivation.length(), bufMask);
+	for (int i = 0; i < derivation.length(); i++) {
+		chars[i] = (GLint)derivation[i];
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Buffer the string start/end indices for each chunk
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numChunks, NULL, GL_STATIC_DRAW);
+	vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2)* numChunks, bufMask);
+	int stringChunkSize = std::min((int)derivation.length(), CHUNK_SIZE);
+	for (int i = 0; i < numChunks; i++)
+	{
+		indices[i].x = stringChunkSize * i;
+		indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
+		if (i == numChunks - 1) {
+			indices[i].y = derivation.length() - 1;
+		}
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Prepare the chunk depths buffer
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks, NULL, GL_STATIC_DRAW);
+
+	// Run step 1
+	glUseProgram(progCStep1);
+	glDispatchCompute(numChunks, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+	// Run step 2 (parallel scan of chunk depths)
+	// We are still bound to ssboChunkDepths
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+	GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+	{
+		int oldValueAtIMinus1 = chunkDepths[0];
+		chunkDepths[0] = 0;
+		for (int i = 1; i < numChunks; i++) {
+			int oldValueAtI = chunkDepths[i];
+			chunkDepths[i] = chunkDepths[i - 1] + oldValueAtIMinus1;
+			oldValueAtIMinus1 = oldValueAtI;
+		}
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
+	GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+	for (int i = 0; i < numChunks; i++) {
+		printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Allocate the depth count and bucket offset arrays
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks * (maxDepth + 1), NULL, GL_STATIC_DRAW);
+	glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32I, GL_RED_INTEGER, GL_INT, NULL);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks * (maxDepth + 1), NULL, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* (maxDepth + 1), NULL, GL_STATIC_DRAW);
+
+	// Run step 3
+	glUseProgram(progCStep3);
+	glDispatchCompute(numChunks, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+	// Run step 4 (scans of depth counts)
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
+	GLint* depthCounts = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
+	GLint* bucketOffsets = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
+	GLint* bucketStartIndices = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+	for (int j = 0; j <= maxDepth; j++) {
+		bucketOffsets[(j * numChunks) + 0] = 0;
+		for (int i = 1; i < numChunks; i++) {
+			bucketOffsets[(j * numChunks) + i] = bucketOffsets[(j * numChunks) + (i - 1)] + depthCounts[(j * numChunks) + (i - 1)];
+		}
+		for (int i = 0; i < numChunks; i++) {
+			printf("        Pushes & pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
+		}
+		for (int i = 0; i < numChunks; i++) {
+			printf("Scanned pushes & pops at depth %d chunk %d: %d\n", j, i, bucketOffsets[(j * numChunks) + i]);
+		}
+	}
+	int bucketArrayLength = 0;
+	bucketStartIndices[0] = 0;
+	for (int j = 0; j <= maxDepth; j++) {
+		bucketStartIndices[j] = bucketArrayLength;
+		printf("Bucket start index %d: %d\n", j, bucketStartIndices[j]);
+
+		int elementsInBucket = depthCounts[(j * numChunks) + (numChunks - 1)] + bucketOffsets[(j * numChunks) + (numChunks - 1)];
+		bucketArrayLength += elementsInBucket;
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Allocate the bucket sort array
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketSortArray);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* bucketArrayLength, NULL, GL_STATIC_DRAW);
+	glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32I, GL_RED_INTEGER, GL_INT, NULL);
+
+	// Run step 5 (fill bucket sort array)
+	glUseProgram(progCStep5);
+	glDispatchCompute(numChunks, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+	// We are still bound to ssboBucketSortArray
+	GLint* bucketSortArray = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+	for (int i = 0; i < bucketArrayLength; i++) {
+		int bucketDepth = 0;
+		for (int j = 0; j <= maxDepth; j++) {
+			if (i >= bucketStartIndices[j]) {
+				bucketDepth = j;
+			}
+		}
+
+		printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
+	}
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
 void keyboard(unsigned char key, int x, int y) {
 	if (key == 27) {
 		exit(0);
@@ -144,171 +296,7 @@ void keyboard(unsigned char key, int x, int y) {
 		std::string derivation = grammar->runDerivation();
 		printf("%s\n", derivation.c_str());
 
-		// Find the max depth of the string
-		int maxDepth = 0;
-		int depth = 0;
-		for (int i = 0; i < derivation.length(); i++) {
-			if (derivation[i] == '[') {
-				depth++;
-			}
-			else if (derivation[i] == ']') {
-				depth--;
-			}
-
-			if (depth > maxDepth) {
-				maxDepth = depth;
-			}
-		}
-
-		// Calculate the number of chunks necessary to process this string
-		int numChunks = ceil(derivation.length() / (double)CHUNK_SIZE);
-
-		GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
-
-		// Buffer over the new string
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* derivation.length(), NULL, GL_STATIC_DRAW);
-		GLint* chars = (GLint*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLint)* derivation.length(), bufMask);
-		for (int i = 0; i < derivation.length(); i++) {
-			chars[i] = (GLint)derivation[i];
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-		// Buffer the string start/end indices for each chunk
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numChunks, NULL, GL_STATIC_DRAW);
-		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2) * numChunks, bufMask);
-		int stringChunkSize = std::min((int)derivation.length(), CHUNK_SIZE);
-		for (int i = 0; i < numChunks; i++)
-		{
-			indices[i].x = stringChunkSize * i;
-			indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
-			if (i == numChunks - 1) {
-				indices[i].y = derivation.length() - 1;
-			}
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-		// Prepare the chunk depths buffer
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks, NULL, GL_STATIC_DRAW);
-
-		// Run step 1
-		glUseProgram(progCStep1);
-		glDispatchCompute(numChunks, 1, 1);
-		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-		// Run step 2 (parallel scan of chunk depths)
-		// We are still bound to ssboChunkDepths
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		{
-			int oldValueAtIMinus1 = chunkDepths[0];
-			chunkDepths[0] = 0;
-			for (int i = 1; i < numChunks; i++) {
-				int oldValueAtI = chunkDepths[i];
-				chunkDepths[i] = chunkDepths[i - 1] + oldValueAtIMinus1;
-				oldValueAtIMinus1 = oldValueAtI;
-			}
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-		GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		for (int i = 0; i < numChunks; i++) {
-			printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-		// Allocate the depth count and bucket offset arrays
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks * (maxDepth + 1), NULL, GL_STATIC_DRAW);
-		glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32I, GL_RED_INTEGER, GL_INT, NULL);
-
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* numChunks * (maxDepth + 1), NULL, GL_STATIC_DRAW);
-
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* (maxDepth + 1), NULL, GL_STATIC_DRAW);
-
-		// Run step 3
-		glUseProgram(progCStep3);
-		glDispatchCompute(numChunks, 1, 1);
-		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-		
-		// Run step 4 (scans of depth counts)
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
-		GLint* depthCounts = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
-		GLint* bucketOffsets = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
-		GLint* bucketStartIndices = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
-		for (int j = 0; j <= maxDepth; j++) {
-			bucketOffsets[(j * numChunks) + 0] = 0;
-			for (int i = 1; i < numChunks; i++) {
-				bucketOffsets[(j * numChunks) + i] = bucketOffsets[(j * numChunks) + (i - 1)] + depthCounts[(j * numChunks) + (i - 1)];
-			}
-			for (int i = 0; i < numChunks; i++) {
-				printf("        Pushes & pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
-			}
-			for (int i = 0; i < numChunks; i++) {
-				printf("Scanned pushes & pops at depth %d chunk %d: %d\n", j, i, bucketOffsets[(j * numChunks) + i]);
-			}
-		}
-		int bucketArrayLength = 0;
-		bucketStartIndices[0] = 0;
-		for (int j = 0; j <= maxDepth; j++) {
-			bucketStartIndices[j] = bucketArrayLength;
-			printf("Bucket start index %d: %d\n", j, bucketStartIndices[j]);
-			
-			int elementsInBucket = depthCounts[(j * numChunks) + (numChunks - 1)] + bucketOffsets[(j * numChunks) + (numChunks - 1)];
-			bucketArrayLength += elementsInBucket;
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketOffsets);
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-		// Allocate the bucket sort array
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketSortArray);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* bucketArrayLength, NULL, GL_STATIC_DRAW);
-		glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32I, GL_RED_INTEGER, GL_INT, NULL);
-
-		// Run step 5 (fill bucket sort array)
-		glUseProgram(progCStep5);
-		glDispatchCompute(numChunks, 1, 1);
-		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-		// We are still bound to ssboBucketSortArray
-		GLint* bucketSortArray = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-		for (int i = 0; i < bucketArrayLength; i++) {
-			int bucketDepth = 0;
-			for (int j = 0; j <= maxDepth; j++) {
-				if (i >= bucketStartIndices[j]) {
-					bucketDepth = j;
-				}
-			}
-
-			printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
-		}
-
-		for (int i = 0; i < bucketArrayLength; i++) {
-			int j = 0;
-			while (j < bucketSortArray[i]) {
-				printf(" ");
-				j++;
-			}
-			printf("v");
-			i++;
-			while (j < bucketSortArray[i] - 1) {
-				printf(" ");
-				j++;
-			}
-			printf("v\n");
-			printf("%s\n", derivation.c_str());
-		}
-		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+		prepareString(derivation);
 	}
 }
 
