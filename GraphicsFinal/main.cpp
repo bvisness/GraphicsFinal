@@ -37,12 +37,10 @@ bool mouseRightPressed = false;
 
 Camera mainCam;
 
-#define NUM_VERTICES 36
-#define NUM_WORK_GROUPS 1
-
-#define MAX_VERTICES 8192
+#define MAX_VERTICES 2048
 
 #define CHUNK_SIZE 128
+#define WORKQUEUE_LENGTH 128
 
 // References to shader programs
 GLuint progRender;
@@ -50,6 +48,7 @@ GLuint progCStep1;
 GLuint progCStep3;
 GLuint progCStep5;
 GLuint progCStep6;
+GLuint progCInterpret;
 
 // References to buffers and objects
 GLuint vao;
@@ -62,6 +61,12 @@ GLuint ssboDepthCounts;
 GLuint ssboBucketOffsets;
 GLuint ssboBucketSortArray;
 GLuint ssboBucketStartIndices;
+GLuint ssboDelta;
+GLuint ssboWorkqueueMatrices;
+GLuint ssboWorkqueueStringPositions;
+GLuint ssboVertexPositions;
+GLuint acWorkqueueIndex;
+GLuint acVertexPairIndex;
 
 // References to shader attributes
 GLuint vPosition;
@@ -80,6 +85,7 @@ float deltaOffset = 0;
 GLfloat cameraHeight = 0;
 GLfloat cameraDistance = 50;
 
+GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 StringPreparationResult prep;
 
 void display(void)
@@ -93,21 +99,27 @@ void display(void)
 	}
 
 	// Draw the scene
-	/*glBindBuffer(GL_ARRAY_BUFFER, vPositionBuffer);
-	printf("Here's the error before: %s\n", gluErrorString(glGetError()));
-	glVertexPointer(4, GL_FLOAT, 0, points);
-	printf("Here's the error after: %s\n", gluErrorString(glGetError()));
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
-	glDisableClientState(GL_VERTEX_ARRAY);*/
-
 	mat4 newModelView = LookAt(Vector4(0, cameraHeight, cameraDistance, 0), Vector4(0, cameraHeight, 0, 0), Vector4(0, 1, 0, 0));
 	newModelView = newModelView * RotateY(mouseX);
 	glUniformMatrix4fv(uModelView, 1, GL_TRUE, newModelView);
 
+	glBindBuffer(GL_COPY_READ_BUFFER, ssboVertexPositions);
+	glBindBuffer(GL_COPY_WRITE_BUFFER, vboPosition);
+	glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(vec4)* MAX_VERTICES);
+
 	glUseProgram(progRender);
 	glBindVertexArray(vao);
 	glDrawArrays(GL_LINES, 0, MAX_VERTICES);
+
+	/*glUseProgram(progRender);
+	glBindBuffer(GL_ARRAY_BUFFER, ssboVertexPositions);
+	printf("Here's the error before: %s\n", gluErrorString(glGetError()));
+	glVertexPointer(4, GL_FLOAT, 0, vertexPositions);
+	printf("Here's the error after: %s\n", gluErrorString(glGetError()));
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glDrawArrays(GL_LINES, 0, MAX_VERTICES);
+	glDisableClientState(GL_VERTEX_ARRAY);*/
+	
 
 	glutSwapBuffers();
 }
@@ -142,7 +154,7 @@ void resetVertices() {
 		vertexPositions[i] = Vector4(0, 0, 0, 1);
 		vertexColors[i] = Vector4(1, 1, 1, 1);
 	}
-	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
+	glBindBuffer(GL_ARRAY_BUFFER, ssboVertexPositions);
 	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
 }
 
@@ -165,8 +177,6 @@ StringPreparationResult prepareString(std::string derivation) {
 
 	// Calculate the number of chunks necessary to process this string
 	int numChunks = ceil(derivation.length() / (double)CHUNK_SIZE);
-
-	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 
 	// Buffer the new string
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
@@ -416,7 +426,7 @@ void handleWorkItems(int* string, int stringLength, std::queue<WorkItem> q, GLfl
 	}
 }
 
-void interpretString(int* string, int stringLength, GLfloat delta) {
+void interpretStringCPU(int* string, int stringLength, GLfloat delta) {
 	std::queue<WorkItem> q = std::queue<WorkItem>();
 	WorkItem startItem = {
 		NewTurtle(),
@@ -426,8 +436,63 @@ void interpretString(int* string, int stringLength, GLfloat delta) {
 	handleWorkItems(string, stringLength, q, delta);
 }
 
+void interpretStringGPU(GLfloat delta) {
+	// Buffer delta over
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDelta);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat), &delta, GL_STATIC_DRAW);
+
+	// Zero out the counters
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acVertexPairIndex);
+	GLfloat zero = 0;
+	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLint), &zero, GL_STATIC_DRAW);
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acWorkqueueIndex);
+	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLint), &zero, GL_STATIC_DRAW);
+
+	// Buffer the start matrix and start string
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboWorkqueueMatrices);
+	mat4* startTurtle = (mat4*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+	*startTurtle = NewTurtle();
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboWorkqueueStringPositions);
+	GLint* startStringIndex = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+	*startStringIndex = 0;
+	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Kick off the first thread
+	glUseProgram(progCInterpret);
+	glDispatchCompute(1, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
+
+	while (true) {
+		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acVertexPairIndex);
+		GLint latestVertexPair = *((GLint*)glMapBuffer(GL_ATOMIC_COUNTER_BUFFER, GL_READ_ONLY));
+		glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+
+		// Get the number of new items in the workqueue and zero the counter back out
+		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acWorkqueueIndex);
+		GLint numNewItems = *((GLint*)glMapBuffer(GL_ATOMIC_COUNTER_BUFFER, GL_READ_ONLY));
+		glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+		
+		// Quit if we have no new work items
+		if (numNewItems == 0) {
+			break;
+		}
+		
+		// Otherwise zero out the buffer for another go
+		// We are still bound to acWorkqueueIndex
+		glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLint), &zero, GL_STATIC_DRAW);
+
+		// Start a new compute shader for each new item in the workqueue
+		glUseProgram(progCInterpret);
+		glDispatchCompute(numNewItems, 1, 1);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
+	}
+}
+
 void drawSystem() {
-	interpretString(prep.preparedString, prep.stringLength, grammar[activeGrammar]->getDelta() + deltaOffset);
+	//interpretStringCPU(prep.preparedString, prep.stringLength, grammar[activeGrammar]->getDelta() + deltaOffset);
+	interpretStringGPU(grammar[activeGrammar]->getDelta() + deltaOffset);
 	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
 	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
 }
@@ -547,6 +612,7 @@ void initShaders() {
 	progCStep3 = InitComputeShader("cshader-step3.glsl");
 	progCStep5 = InitComputeShader("cshader-step5.glsl");
 	progCStep6 = InitComputeShader("cshader-step6.glsl");
+	progCInterpret = InitComputeShader("cshader-interpret.glsl");
 }
 
 void initBuffers() {
@@ -600,6 +666,34 @@ void initBuffers() {
 	glGenBuffers(1, &ssboBucketStartIndices);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 36, ssboBucketStartIndices);
+
+	glGenBuffers(1, &ssboDelta);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDelta);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 37, ssboDelta);
+
+	glGenBuffers(1, &ssboWorkqueueMatrices);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboWorkqueueMatrices);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 38, ssboWorkqueueMatrices);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(mat4)* WORKQUEUE_LENGTH, NULL, GL_STATIC_DRAW);
+
+	glGenBuffers(1, &ssboWorkqueueStringPositions);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboWorkqueueStringPositions);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 39, ssboWorkqueueStringPositions);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* WORKQUEUE_LENGTH, NULL, GL_STATIC_DRAW);
+
+	glGenBuffers(1, &ssboVertexPositions);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, ssboVertexPositions);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec4)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
+
+	glGenBuffers(1, &acWorkqueueIndex);
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acWorkqueueIndex);
+	glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 3, acWorkqueueIndex);
+	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
+
+	glGenBuffers(1, &acVertexPairIndex);
+	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, acVertexPairIndex);
+	glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 4, acVertexPairIndex);
+	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
 }
 
 void init() {

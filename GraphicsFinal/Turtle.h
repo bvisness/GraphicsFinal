@@ -26,6 +26,15 @@ mat3 transposeMat3(mat3 mat) {
 	return result;
 }
 
+mat4 transposeMat4(mat4 mat) {
+	mat4 result = mat4();
+	result[0] = vec4(mat[0].x, mat[1].x, mat[2].x, mat[3].x);
+	result[1] = vec4(mat[0].y, mat[1].y, mat[2].y, mat[3].y);
+	result[2] = vec4(mat[0].z, mat[1].z, mat[2].z, mat[3].z);
+	result[3] = vec4(mat[0].w, mat[1].w, mat[2].w, mat[3].w);
+	return result;
+}
+
 mat3 GetAxes(mat4 turtle) {
 	mat3 result = mat3();
 	result[0] = vec3(turtle[HEADING].x, turtle[LEFT].x, turtle[UP].x);

@@ -85,9 +85,6 @@
     <None Include="fshader-phongshading.glsl">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="cshader-circlevertices.glsl">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="vshader-simple.glsl">
       <Filter>Resource Files</Filter>
     </None>
@@ -104,6 +101,9 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="cshader-step6.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="cshader-interpret.glsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

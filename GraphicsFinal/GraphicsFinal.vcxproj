@@ -90,7 +90,7 @@
     <ClInclude Include="WorkItem.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="cshader-circlevertices.glsl" />
+    <None Include="cshader-interpret.glsl" />
     <None Include="cshader-step1.glsl" />
     <None Include="cshader-step3.glsl" />
     <None Include="cshader-step5.glsl" />
