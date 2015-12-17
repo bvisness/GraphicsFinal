@@ -535,6 +535,12 @@ void initObjects() {
 		};
 		grammar[7] = new Grammar("FFFA", productions, 22.5);
 	}
+	{
+		std::vector<Production> productions = {
+			{ 'F', "F[-F[-F]F]/F[-F]F" }
+		};
+		grammar[8] = new Grammar("F", productions, 22.5);
+	}
 }
 
 void initShaders() {
