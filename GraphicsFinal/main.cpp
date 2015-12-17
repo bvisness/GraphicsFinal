@@ -139,8 +139,8 @@ void mouseMove(int x, int y) {
 void resetVertices() {
 	for (int i = 0; i < MAX_VERTICES; i++)
 	{
-		vertexPositions[i] = Vector4(0, 0, 0, 1); //Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
-		vertexColors[i] = Vector4(1, 1, 1, 1); // Vector4(randRange(0, 1), randRange(0, 1), randRange(0, 1), 1);
+		vertexPositions[i] = Vector4(0, 0, 0, 1);
+		vertexColors[i] = Vector4(1, 1, 1, 1);
 	}
 	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
 	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
