@@ -168,7 +168,7 @@ StringPreparationResult prepareString(std::string derivation) {
 
 	GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 
-	// Buffer over the new string
+	// Buffer the new string
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* derivation.length(), NULL, GL_STATIC_DRAW);
 	{
@@ -208,8 +208,8 @@ StringPreparationResult prepareString(std::string derivation) {
 	// Run step 2 (parallel scan of chunk depths)
 	// We are still bound to ssboChunkDepths
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-	GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
 	{
+		GLint* chunkDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
 		int oldValueAtIMinus1 = chunkDepths[0];
 		chunkDepths[0] = 0;
 		for (int i = 1; i < numChunks; i++) {
@@ -221,11 +221,13 @@ StringPreparationResult prepareString(std::string derivation) {
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
-	GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-	/*for (int i = 0; i < numChunks; i++) {
-		printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
-	}*/
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	{
+		GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		/*for (int i = 0; i < numChunks; i++) {
+			printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
+			}*/
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	}
 
 	// Allocate the depth count and bucket offset arrays
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboDepthCounts);
@@ -257,10 +259,10 @@ StringPreparationResult prepareString(std::string derivation) {
 		}
 		/*for (int i = 0; i < numChunks; i++) {
 			printf("        Pushes & pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
-		}
-		for (int i = 0; i < numChunks; i++) {
+			}
+			for (int i = 0; i < numChunks; i++) {
 			printf("Scanned pushes & pops at depth %d chunk %d: %d\n", j, i, bucketOffsets[(j * numChunks) + i]);
-		}*/
+			}*/
 	}
 	int bucketArrayLength = 0;
 	bucketStartIndices[0] = 0;
@@ -288,17 +290,19 @@ StringPreparationResult prepareString(std::string derivation) {
 	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 	// We are still bound to ssboBucketSortArray
-	GLint* bucketSortArray = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-	for (int i = 0; i < bucketArrayLength; i++) {
-		int bucketDepth = 0;
-		for (int j = 0; j <= maxDepth; j++) {
-			if (i >= bucketStartIndices[j]) {
-				bucketDepth = j;
+	{
+		GLint* bucketSortArray = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		for (int i = 0; i < bucketArrayLength; i++) {
+			int bucketDepth = 0;
+			for (int j = 0; j <= maxDepth; j++) {
+				if (i >= bucketStartIndices[j]) {
+					bucketDepth = j;
+				}
 			}
+			//printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
 		}
-		//printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	// Calculate the number of chunks necessary to process this string
 	int numBucketArrayChunks = ceil(bucketArrayLength / (double)CHUNK_SIZE);
@@ -455,7 +459,6 @@ void keyboard(unsigned char key, int x, int y) {
 		}
 
 		prep = prepareString(derivation);
-
 		drawSystem();
 	}
 }
