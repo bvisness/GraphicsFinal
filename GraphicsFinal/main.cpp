@@ -46,7 +46,6 @@ Camera mainCam;
 
 // References to shader programs
 GLuint progRender;
-GLuint progCompute;
 GLuint progCStep1;
 GLuint progCStep3;
 GLuint progCStep5;
@@ -63,10 +62,6 @@ GLuint ssboDepthCounts;
 GLuint ssboBucketOffsets;
 GLuint ssboBucketSortArray;
 GLuint ssboBucketStartIndices;
-GLuint ssboACEveryOther;
-GLuint ssboPosition;
-const GLuint ssboBindingIndex = 42;
-const GLuint cStep1BindingIndex = 43;
 
 // References to shader attributes
 GLuint vPosition;
@@ -545,7 +540,6 @@ void initObjects() {
 
 void initShaders() {
 	progRender = InitShader("vshader-simple.glsl", "fshader-simple.glsl");
-	progCompute = InitComputeShader("cshader-circlevertices.glsl");
 	progCStep1 = InitComputeShader("cshader-step1.glsl");
 	progCStep3 = InitComputeShader("cshader-step3.glsl");
 	progCStep5 = InitComputeShader("cshader-step5.glsl");
@@ -576,10 +570,6 @@ void initBuffers() {
 	uModelView = glGetUniformLocation(progRender, "uModelView");
 	uProjection = glGetUniformLocation(progRender, "uProjection");
 
-	// Get our SSBO block index
-	GLuint ssboBlockIndex = glGetProgramResourceIndex(progCompute, GL_SHADER_STORAGE_BLOCK, "SSBO");
-	glShaderStorageBlockBinding(progCompute, ssboBlockIndex, ssboBindingIndex);
-
 	glGenBuffers(1, &ssboInputString);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 30, ssboInputString);
@@ -607,12 +597,6 @@ void initBuffers() {
 	glGenBuffers(1, &ssboBucketStartIndices);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboBucketStartIndices);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 36, ssboBucketStartIndices);
-
-	// Configure atomic counters
-	glGenBuffers(1, &ssboACEveryOther);
-	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, ssboACEveryOther);
-	glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
-	glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, ssboACEveryOther);
 }
 
 void init() {
