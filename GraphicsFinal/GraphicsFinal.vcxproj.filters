@@ -91,5 +91,8 @@
     <None Include="cshader-step3.glsl">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="cshader-step5.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
