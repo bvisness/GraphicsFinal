@@ -81,16 +81,20 @@
     <ClInclude Include="Grammar.h" />
     <ClInclude Include="Image.h" />
     <ClInclude Include="Material.h" />
+    <ClInclude Include="StringPreparationResult.h" />
     <ClInclude Include="Texture2D.h" />
+    <ClInclude Include="Turtle.h" />
     <ClInclude Include="VisnessGL.h" />
     <ClInclude Include="VisnessInitShader.h" />
     <ClInclude Include="VisnessUtil.h" />
+    <ClInclude Include="WorkItem.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="cshader-circlevertices.glsl" />
     <None Include="cshader-step1.glsl" />
     <None Include="cshader-step3.glsl" />
     <None Include="cshader-step5.glsl" />
+    <None Include="cshader-step6.glsl" />
     <None Include="fshader-phongshading.glsl" />
     <None Include="fshader-simple.glsl" />
     <None Include="vshader-phongshading.glsl" />

@@ -12,8 +12,12 @@
 #include "VisnessInitShader.h"
 #include "VisnessUtil.h"
 #include "Grammar.h"
+#include "StringPreparationResult.h"
+#include "WorkItem.h"
+#include "Turtle.h"
 #include <math.h>
 #include <algorithm>
+#include <queue>
 #pragma comment(lib, "glew32.lib")
 #pragma comment(lib, "ILUT.lib")
 #pragma comment(lib, "DevIL.lib")
@@ -36,6 +40,8 @@ Camera mainCam;
 #define NUM_VERTICES 36
 #define NUM_WORK_GROUPS 1
 
+#define MAX_VERTICES 2048
+
 #define CHUNK_SIZE 64
 
 // References to shader programs
@@ -44,6 +50,7 @@ GLuint progCompute;
 GLuint progCStep1;
 GLuint progCStep3;
 GLuint progCStep5;
+GLuint progCStep6;
 
 // References to buffers and objects
 GLuint vao;
@@ -68,8 +75,8 @@ GLuint uModelView;
 GLuint uProjection;
 
 // Arrays of vertex data
-Vector4 vertexPositions[NUM_VERTICES];
-Vector4 vertexColors[NUM_VERTICES];
+Vector4 vertexPositions[MAX_VERTICES];
+Vector4 vertexColors[MAX_VERTICES];
 
 Grammar* grammar;
 
@@ -92,18 +99,13 @@ void display(void)
 	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
 	glDisableClientState(GL_VERTEX_ARRAY);*/
 
-	mat4 newModelView = LookAt(Vector4(0, 0, 3, 0), Vector4(0, 0, 0, 0), Vector4(0, 1, 0, 0));
+	mat4 newModelView = LookAt(Vector4(0, 30, 50, 0), Vector4(0, 30, 0, 0), Vector4(0, 1, 0, 0));
 	newModelView = newModelView * RotateY(mouseX);
 	glUniformMatrix4fv(uModelView, 1, GL_TRUE, newModelView);
 
 	glUseProgram(progRender);
 	glBindVertexArray(vao);
-	glDrawArrays(GL_LINES, 0, NUM_VERTICES);
-
-	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, ssboACEveryOther);
-	GLuint counterVal = *(GLuint *)glMapBuffer(GL_ATOMIC_COUNTER_BUFFER, GL_READ_ONLY);
-	glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
-	//printf("uEveryOther value: %d\n", counterVal);
+	glDrawArrays(GL_LINES, 0, MAX_VERTICES);
 
 	glutSwapBuffers();
 }
@@ -127,7 +129,7 @@ void mouseMove(int x, int y) {
 	// Custom code here
 }
 
-void prepareString(std::string derivation) {
+StringPreparationResult prepareString(std::string derivation) {
 	// Find the max depth of the string
 	int maxDepth = 0;
 	int depth = 0;
@@ -152,26 +154,30 @@ void prepareString(std::string derivation) {
 	// Buffer over the new string
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLint)* derivation.length(), NULL, GL_STATIC_DRAW);
-	GLint* chars = (GLint*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLint)* derivation.length(), bufMask);
-	for (int i = 0; i < derivation.length(); i++) {
-		chars[i] = (GLint)derivation[i];
+	{
+		GLint* chars = (GLint*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLint)* derivation.length(), bufMask);
+		for (int i = 0; i < derivation.length(); i++) {
+			chars[i] = (GLint)derivation[i];
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	// Buffer the string start/end indices for each chunk
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numChunks, NULL, GL_STATIC_DRAW);
-	vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2)* numChunks, bufMask);
-	int stringChunkSize = std::min((int)derivation.length(), CHUNK_SIZE);
-	for (int i = 0; i < numChunks; i++)
 	{
-		indices[i].x = stringChunkSize * i;
-		indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
-		if (i == numChunks - 1) {
-			indices[i].y = derivation.length() - 1;
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numChunks, NULL, GL_STATIC_DRAW);
+		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2)* numChunks, bufMask);
+		int stringChunkSize = std::min((int)derivation.length(), CHUNK_SIZE);
+		for (int i = 0; i < numChunks; i++)
+		{
+			indices[i].x = stringChunkSize * i;
+			indices[i].y = (stringChunkSize * i) + stringChunkSize - 1;
+			if (i == numChunks - 1) {
+				indices[i].y = derivation.length() - 1;
+			}
 		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
-	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	// Prepare the chunk depths buffer
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
@@ -199,9 +205,9 @@ void prepareString(std::string derivation) {
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkDepths);
 	GLint* chunkStartDepths = (GLint *)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-	for (int i = 0; i < numChunks; i++) {
+	/*for (int i = 0; i < numChunks; i++) {
 		printf("Chunk start depth %d: %d\n", i, chunkStartDepths[i]);
-	}
+	}*/
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 	// Allocate the depth count and bucket offset arrays
@@ -232,18 +238,18 @@ void prepareString(std::string derivation) {
 		for (int i = 1; i < numChunks; i++) {
 			bucketOffsets[(j * numChunks) + i] = bucketOffsets[(j * numChunks) + (i - 1)] + depthCounts[(j * numChunks) + (i - 1)];
 		}
-		for (int i = 0; i < numChunks; i++) {
+		/*for (int i = 0; i < numChunks; i++) {
 			printf("        Pushes & pops at depth %d chunk %d: %d\n", j, i, depthCounts[(j * numChunks) + i]);
 		}
 		for (int i = 0; i < numChunks; i++) {
 			printf("Scanned pushes & pops at depth %d chunk %d: %d\n", j, i, bucketOffsets[(j * numChunks) + i]);
-		}
+		}*/
 	}
 	int bucketArrayLength = 0;
 	bucketStartIndices[0] = 0;
 	for (int j = 0; j <= maxDepth; j++) {
 		bucketStartIndices[j] = bucketArrayLength;
-		printf("Bucket start index %d: %d\n", j, bucketStartIndices[j]);
+		// printf("Bucket start index %d: %d\n", j, bucketStartIndices[j]);
 
 		int elementsInBucket = depthCounts[(j * numChunks) + (numChunks - 1)] + bucketOffsets[(j * numChunks) + (numChunks - 1)];
 		bucketArrayLength += elementsInBucket;
@@ -273,10 +279,130 @@ void prepareString(std::string derivation) {
 				bucketDepth = j;
 			}
 		}
-
-		printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
+		//printf("Bucket item %d (depth %d): %d\n", i, bucketDepth, bucketSortArray[i]);
 	}
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+	// Calculate the number of chunks necessary to process this string
+	int numBucketArrayChunks = ceil(bucketArrayLength / (double)CHUNK_SIZE);
+
+	// Buffer the start/end indices for each chunk
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputStringStartsEnds);
+	{
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(vec2)* numBucketArrayChunks, NULL, GL_STATIC_DRAW);
+		vec2* indices = (vec2*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(vec2)* numBucketArrayChunks, bufMask);
+		int bucketChunkSize = std::min((int)bucketArrayLength, CHUNK_SIZE);
+		for (int i = 0; i < numBucketArrayChunks; i++)
+		{
+			indices[i].x = bucketChunkSize * i;
+			indices[i].y = (bucketChunkSize * i) + bucketChunkSize - 1;
+			if (i == numBucketArrayChunks - 1) {
+				indices[i].y = bucketArrayLength - 1;
+			}
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	}
+
+	// Run step 6 (modify the input string)
+	glUseProgram(progCStep6);
+	glDispatchCompute(numBucketArrayChunks, 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+	// Copy the changes back to the CPU
+	int* newString = new int[derivation.length()];
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboInputString);
+	{
+		GLint* chars = (GLint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+		for (int i = 0; i < derivation.length(); i++) {
+			newString[i] = chars[i];
+		}
+		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+	}
+
+	return StringPreparationResult {
+		numChunks,
+		maxDepth,
+		newString,
+		derivation.length()
+	};
+}
+
+void handleWorkItems(int* string, int stringLength, std::queue<WorkItem> q, GLfloat delta) {
+	int vertexI = 0;
+	while (!q.empty()) {
+		WorkItem item = q.front();
+		q.pop();
+
+		//printf("Starting a work item at index %d\n", item.stringIndex);
+		mat4 turtle = item.startMatrix;
+		for (int i = item.stringIndex; i < stringLength; i++) {
+			if (string[i] < 0) {
+				// Surprise! It's actually a push.
+				// Negate it and you get the location of the corresponding pop.
+				WorkItem newItem = {
+					turtle,
+					i + 1
+				};
+				q.push(newItem);
+				
+				int popIndex = -(int)string[i];
+				i = popIndex; // This will be incremented when we go through the loop
+
+				//printf("Creating a new work item at index %d\n", newItem.stringIndex);
+				//printf("Continuing at index %d\n", i);
+				continue;
+			}
+
+			if (string[i] == 'F') {
+				vertexPositions[vertexI] = turtle[POSITION];
+				vertexI++;
+				//printf("New vertex at %f %f %f\n", turtle[POSITION].x, turtle[POSITION].y, turtle[POSITION].z);
+
+				turtle[POSITION] += turtle[HEADING];
+				
+				vertexPositions[vertexI] = turtle[POSITION];
+				vertexI++;
+				//printf("New vertex at %f %f %f\n", turtle[POSITION].x, turtle[POSITION].y, turtle[POSITION].z);
+			}
+			else if (string[i] == 'f') {
+				turtle[POSITION] += turtle[HEADING];
+			}
+			else if (string[i] == '+') {
+				turtle = RotateU(turtle, delta);
+			}
+			else if (string[i] == '-') {
+				turtle = RotateU(turtle, -delta);
+			}
+			else if (string[i] == '&') {
+				turtle = RotateL(turtle, delta);
+			}
+			else if (string[i] == '^') {
+				turtle = RotateL(turtle, -delta);
+			}
+			else if (string[i] == '\\') {
+				turtle = RotateH(turtle, delta);
+			}
+			else if (string[i] == '/') {
+				turtle = RotateH(turtle, -delta);
+			}
+			else if (string[i] == '|') {
+				turtle = RotateU(turtle, 180);
+			}
+			else if (string[i] == ']') {
+				break;
+			}
+		}
+	}
+}
+
+void interpretString(int* string, int stringLength, GLfloat delta) {
+	std::queue<WorkItem> q = std::queue<WorkItem>();
+	WorkItem startItem = {
+		NewTurtle(),
+		0
+	};
+	q.push(startItem);
+	handleWorkItems(string, stringLength, q, delta);
 }
 
 void keyboard(unsigned char key, int x, int y) {
@@ -296,7 +422,16 @@ void keyboard(unsigned char key, int x, int y) {
 		std::string derivation = grammar->runDerivation();
 		printf("%s\n", derivation.c_str());
 
-		prepareString(derivation);
+		StringPreparationResult prep = prepareString(derivation);
+		for (int i = 0; i < prep.stringLength; i++) {
+			printf("%d ", prep.preparedString[i]);
+		}
+		printf("\n");
+
+		interpretString(prep.preparedString, prep.stringLength, 27.5);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
+		glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
 	}
 }
 
@@ -314,10 +449,10 @@ void specialUp(int key, int x, int y) {
 
 void initObjects() {
 	mainCam = Camera();
-	for (int i = 0; i < NUM_VERTICES; i++)
+	for (int i = 0; i < MAX_VERTICES; i++)
 	{
-		vertexPositions[i] = Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
-		vertexColors[i] = Vector4(1, 1, 1, 1);
+		vertexPositions[i] = Vector4(0, 0, 0, 1); //Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
+		vertexColors[i] = Vector4(randRange(0, 1), randRange(0, 1), randRange(0, 1), 1);
 	}
 
 	std::vector<Production> productions = {
@@ -332,6 +467,7 @@ void initShaders() {
 	progCStep1 = InitComputeShader("cshader-step1.glsl");
 	progCStep3 = InitComputeShader("cshader-step3.glsl");
 	progCStep5 = InitComputeShader("cshader-step5.glsl");
+	progCStep6 = InitComputeShader("cshader-step6.glsl");
 }
 
 void initBuffers() {
@@ -342,14 +478,14 @@ void initBuffers() {
 	// Create standard vbo and buffer data
 	glGenBuffers(1, &vboPosition);
 	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
-	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* NUM_VERTICES, vertexPositions, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
 	vPosition = glGetAttribLocation(progRender, "vPosition");
 	glEnableVertexAttribArray(vPosition);
 	glVertexAttribPointer(vPosition, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
 	glGenBuffers(1, &vboColor);
 	glBindBuffer(GL_ARRAY_BUFFER, vboColor);
-	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* NUM_VERTICES, vertexColors, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexColors, GL_STATIC_DRAW);
 	vAmbientDiffuseColor = glGetAttribLocation(progRender, "vAmbientDiffuseColor");
 	glEnableVertexAttribArray(vAmbientDiffuseColor);
 	glVertexAttribPointer(vAmbientDiffuseColor, 4, GL_FLOAT, GL_FALSE, 0, 0);

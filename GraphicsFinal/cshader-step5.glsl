@@ -35,7 +35,7 @@ layout(std430, binding = 36) coherent buffer ssboBucketStartIndices
 };
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-int opCounts[64];
+int opCounts[64]; // 64 is arbitrary. I sincerely hope I never have an L-system that goes 65 levels deep.
 
 int arrayIndex(int depth, uint i) {
 	return (depth * depths.length()) + int(i);

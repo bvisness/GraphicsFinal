@@ -68,6 +68,15 @@
     <ClInclude Include="Grammar.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="StringPreparationResult.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WorkItem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Turtle.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="vshader-phongshading.glsl">
@@ -92,6 +101,9 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="cshader-step5.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="cshader-step6.glsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
