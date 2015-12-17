@@ -18,6 +18,14 @@ mat4 NewTurtle() {
 	return turtle;
 }
 
+mat3 transposeMat3(mat3 mat) {
+	mat3 result = mat3();
+	result[0] = vec3(mat[0].x, mat[1].x, mat[2].x);
+	result[1] = vec3(mat[0].y, mat[1].y, mat[2].y);
+	result[2] = vec3(mat[0].z, mat[1].z, mat[2].z);
+	return result;
+}
+
 mat3 GetAxes(mat4 turtle) {
 	mat3 result = mat3();
 	result[0] = vec3(turtle[HEADING].x, turtle[LEFT].x, turtle[UP].x);
@@ -27,10 +35,10 @@ mat3 GetAxes(mat4 turtle) {
 }
 
 mat4 SetAxes(mat4 turtle, mat3 axes) {
-	axes = transpose(axes);
-	turtle[HEADING] = vec4(axes[0], 0);
-	turtle[LEFT] = vec4(axes[1], 0);
-	turtle[UP] = vec4(axes[2], 0);
+	mat3 axesT = transposeMat3(axes);
+	turtle[HEADING] = vec4(axesT[0], 0);
+	turtle[LEFT] = vec4(axesT[1], 0);
+	turtle[UP] = vec4(axesT[2], 0);
 	return turtle;
 }
 

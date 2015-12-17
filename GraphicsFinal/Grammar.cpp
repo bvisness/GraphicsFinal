@@ -55,3 +55,11 @@ std::string Grammar::runDerivation() {
 
 	return derivedString;
 }
+
+void Grammar::reset() {
+	derivedString = _axiom;
+}
+
+float Grammar::getDelta() {
+	return _delta;
+}

@@ -40,7 +40,7 @@ Camera mainCam;
 #define NUM_VERTICES 36
 #define NUM_WORK_GROUPS 1
 
-#define MAX_VERTICES 2048
+#define MAX_VERTICES 8192
 
 #define CHUNK_SIZE 64
 
@@ -78,7 +78,11 @@ GLuint uProjection;
 Vector4 vertexPositions[MAX_VERTICES];
 Vector4 vertexColors[MAX_VERTICES];
 
-Grammar* grammar;
+Grammar* grammar[5];
+int activeGrammar = 0;
+
+GLfloat cameraHeight = 0;
+GLfloat cameraDistance = 50;
 
 void display(void)
 {
@@ -99,7 +103,7 @@ void display(void)
 	glDrawArrays(GL_POINTS, 0, NUM_VERTICES);
 	glDisableClientState(GL_VERTEX_ARRAY);*/
 
-	mat4 newModelView = LookAt(Vector4(0, 30, 50, 0), Vector4(0, 30, 0, 0), Vector4(0, 1, 0, 0));
+	mat4 newModelView = LookAt(Vector4(0, cameraHeight, cameraDistance, 0), Vector4(0, cameraHeight, 0, 0), Vector4(0, 1, 0, 0));
 	newModelView = newModelView * RotateY(mouseX);
 	glUniformMatrix4fv(uModelView, 1, GL_TRUE, newModelView);
 
@@ -120,13 +124,28 @@ void mouseClick(int button, int state, int x, int y) {
 }
 
 void mouseMove(int x, int y) {
-	y = -y;
+	y = wh - y;
 	mouseXDelta = x - mouseX;
 	mouseYDelta = y - mouseY;
 	mouseX = x;
 	mouseY = y;
 
-	// Custom code here
+	if (mouseLeftPressed) {
+		cameraDistance -= mouseYDelta;
+	}
+	else {
+		cameraHeight = mouseY / 5.0;
+	}
+}
+
+void resetVertices() {
+	for (int i = 0; i < MAX_VERTICES; i++)
+	{
+		vertexPositions[i] = Vector4(0, 0, 0, 1); //Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
+		vertexColors[i] = Vector4(1, 1, 1, 1); // Vector4(randRange(0, 1), randRange(0, 1), randRange(0, 1), 1);
+	}
+	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
 }
 
 StringPreparationResult prepareString(std::string derivation) {
@@ -411,24 +430,20 @@ void keyboard(unsigned char key, int x, int y) {
 	}
 	
 	// Custom keyboard code
-	if (key == 'c') {
-		printf("Trying to compute...\n");
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ssboBindingIndex, vboPosition);
-		glUseProgram(progCompute);
-		glDispatchCompute(NUM_WORK_GROUPS, 1, 1);
-		glMemoryBarrier(GL_ATOMIC_COUNTER_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+	if (key >= '1' && key <= '5') {
+		activeGrammar = key - '1';
+		grammar[activeGrammar]->reset();
+		resetVertices();
 	}
 	else if (key == 'd') {
-		std::string derivation = grammar->runDerivation();
-		printf("%s\n", derivation.c_str());
+		std::string derivation = grammar[activeGrammar]->runDerivation();
+		if (derivation.length() < 512) {
+			printf("%s\n", derivation.c_str());
+		}
 
 		StringPreparationResult prep = prepareString(derivation);
-		for (int i = 0; i < prep.stringLength; i++) {
-			printf("%d ", prep.preparedString[i]);
-		}
-		printf("\n");
 
-		interpretString(prep.preparedString, prep.stringLength, 27.5);
+		interpretString(prep.preparedString, prep.stringLength, grammar[activeGrammar]->getDelta());
 
 		glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
 		glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
@@ -449,16 +464,43 @@ void specialUp(int key, int x, int y) {
 
 void initObjects() {
 	mainCam = Camera();
-	for (int i = 0; i < MAX_VERTICES; i++)
-	{
-		vertexPositions[i] = Vector4(0, 0, 0, 1); //Vector4(randRange(-1, 1), randRange(-1, 1), randRange(-1, 1), 1);
-		vertexColors[i] = Vector4(randRange(0, 1), randRange(0, 1), randRange(0, 1), 1);
-	}
+	resetVertices();
 
-	std::vector<Production> productions = {
-		{ 'F', "F[+F]F[-F]F" }
-	};
-	grammar = new Grammar("F", productions);
+	{
+		std::vector<Production> productions = {
+			{ 'X', "F-[[X]+X]+F[+FX]-X" },
+			{ 'F', "FF" }
+		};
+		grammar[0] = new Grammar("X", productions, 25);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'F', "F[+F]F[-F]F" }
+		};
+		grammar[1] = new Grammar("F", productions, 25.7);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'F', "FF-[-F+F+F]+[+F-F-F]" }
+		};
+		grammar[2] = new Grammar("F", productions, 22.5);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'X', "F[+X][-X]FX" },
+			{ 'F', "FF" }
+		};
+		grammar[3] = new Grammar("X", productions, 25.7);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'A', "[&FL!A]/////'[&FL!A]///////'[&FL!A]" },
+			{ 'F', "S/////F" },
+			{ 'S', "FL" },
+			{ 'L', "['''^^{-f+f+f-|-f+f+f}]" }
+		};
+		grammar[4] = new Grammar("A", productions, 22.5);
+	}
 }
 
 void initShaders() {
