@@ -42,7 +42,7 @@ Camera mainCam;
 
 #define MAX_VERTICES 8192
 
-#define CHUNK_SIZE 64
+#define CHUNK_SIZE 128
 
 // References to shader programs
 GLuint progRender;
@@ -78,11 +78,14 @@ GLuint uProjection;
 Vector4 vertexPositions[MAX_VERTICES];
 Vector4 vertexColors[MAX_VERTICES];
 
-Grammar* grammar[5];
+Grammar* grammar[10];
 int activeGrammar = 0;
+float deltaOffset = 0;
 
 GLfloat cameraHeight = 0;
 GLfloat cameraDistance = 50;
+
+StringPreparationResult prep;
 
 void display(void)
 {
@@ -424,16 +427,31 @@ void interpretString(int* string, int stringLength, GLfloat delta) {
 	handleWorkItems(string, stringLength, q, delta);
 }
 
+void drawSystem() {
+	interpretString(prep.preparedString, prep.stringLength, grammar[activeGrammar]->getDelta() + deltaOffset);
+	glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
+	glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
+}
+
 void keyboard(unsigned char key, int x, int y) {
 	if (key == 27) {
 		exit(0);
 	}
 	
 	// Custom keyboard code
-	if (key >= '1' && key <= '5') {
+	if (key >= '1' && key <= '9') {
 		activeGrammar = key - '1';
 		grammar[activeGrammar]->reset();
 		resetVertices();
+		deltaOffset = 0;
+	}
+	else if (key == '=') {
+		deltaOffset += 5;
+		drawSystem();
+	}
+	else if (key == '-') {
+		deltaOffset -= 5;
+		drawSystem();
 	}
 	else if (key == 'd') {
 		std::string derivation = grammar[activeGrammar]->runDerivation();
@@ -441,12 +459,9 @@ void keyboard(unsigned char key, int x, int y) {
 			printf("%s\n", derivation.c_str());
 		}
 
-		StringPreparationResult prep = prepareString(derivation);
+		prep = prepareString(derivation);
 
-		interpretString(prep.preparedString, prep.stringLength, grammar[activeGrammar]->getDelta());
-
-		glBindBuffer(GL_ARRAY_BUFFER, vboPosition);
-		glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(GLfloat)* MAX_VERTICES, vertexPositions, GL_STATIC_DRAW);
+		drawSystem();
 	}
 }
 
@@ -500,6 +515,25 @@ void initObjects() {
 			{ 'L', "['''^^{-f+f+f-|-f+f+f}]" }
 		};
 		grammar[4] = new Grammar("A", productions, 22.5);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'X', "+YF-XFX-FY+" },
+			{ 'Y', "-XF+YFY+FX-" }
+		};
+		grammar[5] = new Grammar("X", productions, 90);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'F', "FF+F+F+F+F+F-F" }
+		};
+		grammar[6] = new Grammar("F+F+F+F", productions, 90);
+	}
+	{
+		std::vector<Production> productions = {
+			{ 'A', "[&FFFA] //// [&FFFA] //// [&FFFA]" }
+		};
+		grammar[7] = new Grammar("FFFA", productions, 22.5);
 	}
 }
 
